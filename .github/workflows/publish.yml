@@ -1,0 +1,64 @@
+name: Test and Publish
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test Python
+        run: |
+          python3 python/train.py
+          python3 python/inference.py
+
+      - name: Build ggml
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel 2
+
+      - name: Test ggml
+        run: |
+          ./build/onebit-not-ggml model.bin
+
+  publish:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Hugging Face CLI
+        run: pip install huggingface_hub
+
+      - name: Upload model
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ vars.HF_REPO }}
+        run: |
+          hf upload "$HF_REPO" . . \
+            --exclude ".github/**" \
+            --exclude "build/**" \
+            --exclude ".git/**"
